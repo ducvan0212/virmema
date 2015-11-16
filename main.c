@@ -11,6 +11,7 @@
 #define PAGE_SIZE 256
 #define PHY_SIZE 256
 #define PAGE_TABLE_SIZE 256
+#define TLB_SIZE 16
 
 // record of page table
 typedef struct page_record
@@ -112,15 +113,26 @@ void print_frame(Frame frame) {
   }
 }
 
+int translate_to_physical_address(int frame, int offset) {
+  int address = frame;
+  printf("%d\n", address);
+  address = address << 8;
+  printf("%d\n", address);
+  address = address | offset;
+  printf("%d\n", address);
+  return address;
+}
+
 int main(void)
 {
-  FILE *fbs;
-  int logical_address, page_number, page_offset;
+  FILE *fbs, *fa;
+  int logical_address, physical_address, page_number, page_offset;
   // page table has 2^8=256 entries
   Record page_table[PAGE_TABLE_SIZE];
   // physical memory has 256*256 bytes
   Frame physical_memory[PHY_SIZE];
-  int i = 0, a, frame;
+  int i = 0, a, corresponding_frame;
+  int page_fault_counter = 0, translation_counter = 0, tlb_hit_counter = 0;
   char *buffer;
   
   // init page table
@@ -139,17 +151,20 @@ int main(void)
     return 1;
   }
   
-  fseek (fbs , 0 , SEEK_END);
-  int lSize = ftell (fbs);
-  rewind (fbs);
-  // printf("%d", lSize);
+  fa = fopen("addresses.txt", "rb"); // open backing store
+  if (fa == NULL) {
+    printf("File can not opened, errno = %d\n", errno);
+    return 1;
+  }
+  
   buffer = (char*) malloc (sizeof(char)*(FRAME_SIZE));
   
   char *s;
 	while ((s = get_line(stdin))) {
+    translation_counter++;
     logical_address = atoi(s);
-    if (logical_address >= 65535) {
-      printf("Virtual address space is 2^16 = 65536. Out of bound!\n");
+    if (logical_address > 65535) {
+      printf("Virtual address space is 2^16 = 65536. You entered %d. So, out of bound!\n", logical_address);
       free(s);
       continue;
     }
@@ -159,26 +174,39 @@ int main(void)
     page_number = logical_address >> 8;
     printf("Page number: %-10d\t\tPage offset: %d\n", page_number, page_offset);
     
-    // page is not in page table
-    if (search_in_page_table(page_table, PAGE_TABLE_SIZE, page_number) == -1) {
+    corresponding_frame = search_in_page_table(page_table, PAGE_TABLE_SIZE, page_number);
+    // PAGE TABLE HIT
+    if (corresponding_frame >= 0) {
+      printf("Page table hit.\n");
+    } 
+    // PAGE FAULT. page is not in page table
+    else {
+      page_fault_counter++;
       // move indicator to the page in backing store
       fseek(fbs, sizeof(char)*page_number*(PAGE_SIZE), SEEK_SET);
       // read a page
       a=fread(buffer, sizeof(char)*(PAGE_SIZE), 1, fbs);
-  		printf("Read from backing store\n");
-      print_frame(physical_memory[frame]);
+  		// fetch to physical memory
+      corresponding_frame = copy_to_physical_memory(physical_memory, PHY_SIZE, buffer);
+      printf("Write to physical memory #%d\n", corresponding_frame);
+  		print_frame(physical_memory[corresponding_frame]);
       printf("\n");
-      // fetch to physical memory
-      frame = copy_to_physical_memory(physical_memory, PHY_SIZE, buffer);
-      printf("Write to physical memory #%d\n", frame);
       // update page table
-      update_page_table(page_table, PAGE_TABLE_SIZE, page_number, frame);
+      update_page_table(page_table, PAGE_TABLE_SIZE, page_number, corresponding_frame);
       // TODO: update TLB
     }
     
+    physical_address = translate_to_physical_address(corresponding_frame, page_offset);
+    printf("Physical address: %-15dValue: %c\n", physical_address, physical_memory[corresponding_frame].content[page_offset]);
     free(s);
     printf("\n");
 	}
+  
+  printf("Translation: %d\n", translation_counter);
+  printf("Page fault: %d\n", page_fault_counter);
+  printf("Page fault rate: %f\n", (float) page_fault_counter/translation_counter);
+  printf("TLB hit: %d\n", tlb_hit_counter);
+  printf("TLB hit rate: %f\n", (float) tlb_hit_counter/translation_counter);
   
   free(buffer);
   free(s);
