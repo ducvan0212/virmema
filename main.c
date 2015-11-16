@@ -17,6 +17,7 @@
 typedef struct page_record
 {
   int dirty;
+  // index can be used to infer the page number instead of a explicitly declared page field. Added for clarity purpose.
   int page;
   int frame;
 } Record;
@@ -27,6 +28,20 @@ typedef struct v_frame
   int dirty;
   char content[FRAME_SIZE];
 } Frame;
+
+typedef struct v_tlb_record
+{
+  int dirty;
+  int page;
+  int frame;
+} TLB_Record;
+
+// circular array structure
+typedef struct v_tlb
+{
+  TLB_Record records[TLB_SIZE];
+  int tail;
+} TLB;
 
 char *get_line(FILE* fp)
 {
@@ -55,9 +70,7 @@ char *get_line(FILE* fp)
 int search_in_page_table(Record *page_table, int size, int page) {
   int i;
   for (i=0; i<size; i++) {
-    printf("Page table #%-3d: page %-15d frame %-15d dirty %d\n", i, page_table[i].page, page_table[i].frame, page_table[i].dirty);
     if (page_table[i].dirty == 1 && page_table[i].page == page) {
-      printf("Found!\n");
       return page_table[i].frame;
     }
   }
@@ -106,6 +119,16 @@ void update_page_table(Record *page_table, int size, int page_number, int frame)
   }
 }
 
+void print_page_table(Record *page_table, int size) {
+  int i;
+  for (i=0; i<size; i++) {
+    if (page_table[i].dirty == 0) {
+      return;
+    }
+    printf("Page table #%-3d: page %-15d frame %-15d dirty %d\n", i, page_table[i].page, page_table[i].frame, page_table[i].dirty);
+  }
+}
+
 void print_frame(Frame frame) {
   int i;
   for (i=0; i<256; i++) {
@@ -113,13 +136,43 @@ void print_frame(Frame frame) {
   }
 }
 
+void print_tlb(TLB tlb) {
+  int i;
+  
+  printf("TLB tail: %d\n", tlb.tail);
+  for (i=0; i<TLB_SIZE; i++) {
+    printf("Page: %-10dFrame: %-10dDirty: %d\n", tlb.records[i].page, tlb.records[i].frame, tlb.records[i].dirty);
+  }
+}
+
+void update_tlb(TLB *tlb, int page, int frame) {
+  tlb->tail = (tlb->tail + 1) % TLB_SIZE;
+  tlb->records[tlb->tail].page = page;
+  tlb->records[tlb->tail].frame = frame;
+  tlb->records[tlb->tail].dirty = 1;
+  printf("Update in TLB#%d: page %d, frame %d\n", tlb->tail, tlb->records[tlb->tail].page, tlb->records[tlb->tail].frame);
+}
+
+int search_in_tlb(TLB tlb, int page) {
+  int i;
+  
+  for (i=0; i<TLB_SIZE; i++) {
+    if (tlb.records[i].dirty == 1) {
+      if (tlb.records[i].page == page) {
+        return tlb.records[i].frame;
+      }
+    }
+  }
+  return -1;
+}
+
 int translate_to_physical_address(int frame, int offset) {
   int address = frame;
-  printf("%d\n", address);
+  // printf("%d\n", address);
   address = address << 8;
-  printf("%d\n", address);
+  // printf("%d\n", address);
   address = address | offset;
-  printf("%d\n", address);
+  // printf("%d\n", address);
   return address;
 }
 
@@ -134,6 +187,7 @@ int main(void)
   int i = 0, a, corresponding_frame;
   int page_fault_counter = 0, translation_counter = 0, tlb_hit_counter = 0;
   char *buffer;
+  TLB tlb;
   
   // init page table
   for (i=0; i<PAGE_TABLE_SIZE; i++) {
@@ -143,6 +197,12 @@ int main(void)
   // init physical memory
   for (i=0; i<PHY_SIZE; i++) {
     physical_memory[i].dirty = 0;
+  }
+  
+  // init TLB
+  tlb.tail = 0;
+  for (i=0; i<TLB_SIZE; i++) {
+    tlb.records[i].dirty = 0;
   }
   
   fbs = fopen("BACKING_STORE.bin", "rb"); // open backing store
@@ -174,28 +234,39 @@ int main(void)
     page_number = logical_address >> 8;
     printf("Page number: %-10d\t\tPage offset: %d\n", page_number, page_offset);
     
-    corresponding_frame = search_in_page_table(page_table, PAGE_TABLE_SIZE, page_number);
-    // PAGE TABLE HIT
+    corresponding_frame = search_in_tlb(tlb, page_number);
     if (corresponding_frame >= 0) {
-      printf("Page table hit.\n");
-    } 
-    // PAGE FAULT. page is not in page table
-    else {
-      page_fault_counter++;
-      // move indicator to the page in backing store
-      fseek(fbs, sizeof(char)*page_number*(PAGE_SIZE), SEEK_SET);
-      // read a page
-      a=fread(buffer, sizeof(char)*(PAGE_SIZE), 1, fbs);
-  		// fetch to physical memory
-      corresponding_frame = copy_to_physical_memory(physical_memory, PHY_SIZE, buffer);
-      printf("Write to physical memory #%d\n", corresponding_frame);
-  		print_frame(physical_memory[corresponding_frame]);
-      printf("\n");
-      // update page table
-      update_page_table(page_table, PAGE_TABLE_SIZE, page_number, corresponding_frame);
-      // TODO: update TLB
+      printf("TLB hit.\n");
+      tlb_hit_counter++;
+    } else {
+      printf("TLB fault.\n");
+      corresponding_frame = search_in_page_table(page_table, PAGE_TABLE_SIZE, page_number);
+      // PAGE TABLE HIT
+      if (corresponding_frame >= 0) {
+        printf("Page table hit.\n");
+        update_tlb(&tlb, page_number, corresponding_frame);
+      } 
+      // PAGE FAULT. page is not in page table
+      else {
+        printf("Page table fault.\n");
+        page_fault_counter++;
+        // move indicator to the page in backing store
+        fseek(fbs, sizeof(char)*page_number*(PAGE_SIZE), SEEK_SET);
+        // read a page
+        a=fread(buffer, sizeof(char)*(PAGE_SIZE), 1, fbs);
+    		// fetch to physical memory
+        corresponding_frame = copy_to_physical_memory(physical_memory, PHY_SIZE, buffer);
+        printf("Write to physical memory #%d\n", corresponding_frame);
+    		print_frame(physical_memory[corresponding_frame]);
+        printf("\n");
+        // update page table
+        update_page_table(page_table, PAGE_TABLE_SIZE, page_number, corresponding_frame);
+        update_tlb(&tlb, page_number, corresponding_frame);
+      }
     }
-    
+      
+    print_page_table(page_table, PAGE_TABLE_SIZE);
+    print_tlb(tlb);
     physical_address = translate_to_physical_address(corresponding_frame, page_offset);
     printf("Physical address: %-15dValue: %c\n", physical_address, physical_memory[corresponding_frame].content[page_offset]);
     free(s);
