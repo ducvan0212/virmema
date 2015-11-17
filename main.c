@@ -52,7 +52,8 @@ int main(void)
   buffer = (char*) malloc (sizeof(char)*(FRAME_SIZE));
   
   char *s;
-	while ((s = get_line(stdin))) {
+	while ((s = get_line(fa))) {
+    printf("------------------------\n");
     translation_counter++;
     logical_address = atoi(s);
     if (logical_address > 65535) {
@@ -60,27 +61,30 @@ int main(void)
       free(s);
       continue;
     }
+    
+    printf("Logical address: %d\n", logical_address);
+    
     // extract page offset by get 8 lsb from logical address.
     page_offset = logical_address & 0xff;
     // extract page number by shift 8 bits to the right. 8 msb are remaining.
     page_number = logical_address >> 8;
-    printf("Page number: %-10d\t\tPage offset: %d\n", page_number, page_offset);
+    printf("\tPage number: %-10d\n\tPage offset: %d\n", page_number, page_offset);
     
     corresponding_frame = search_in_tlb(tlb, page_number);
     if (corresponding_frame >= 0) {
-      printf("TLB hit.\n");
+      printf("\tTLB hit.\n");
       tlb_hit_counter++;
     } else {
-      printf("TLB fault.\n");
+      printf("\tTLB fault.\n");
       corresponding_frame = search_in_page_table(page_table, PAGE_TABLE_SIZE, page_number);
       // PAGE TABLE HIT
       if (corresponding_frame >= 0) {
-        printf("Page table hit.\n");
+        printf("\tPage table hit.\n");
         update_tlb(&tlb, page_number, corresponding_frame);
       } 
       // PAGE FAULT. page is not in page table
       else {
-        printf("Page table fault.\n");
+        printf("\tPage table fault.\n");
         page_fault_counter++;
         // move indicator to the page in backing store
         fseek(fbs, sizeof(char)*page_number*(PAGE_SIZE), SEEK_SET);
@@ -88,19 +92,19 @@ int main(void)
         a=fread(buffer, sizeof(char)*(PAGE_SIZE), 1, fbs);
     		// fetch to physical memory
         corresponding_frame = copy_to_physical_memory(physical_memory, PHY_SIZE, buffer);
-        printf("Write to physical memory #%d\n", corresponding_frame);
-    		print_frame(physical_memory[corresponding_frame]);
-        printf("\n");
+        // printf("Write to physical memory #%d\n", corresponding_frame);
+        // print_frame(physical_memory[corresponding_frame]);
+        // printf("\n");
         // update page table
         update_page_table(page_table, PAGE_TABLE_SIZE, page_number, corresponding_frame);
         update_tlb(&tlb, page_number, corresponding_frame);
       }
     }
       
-    print_page_table(page_table, PAGE_TABLE_SIZE);
-    print_tlb(tlb);
+    // print_page_table(page_table, PAGE_TABLE_SIZE);
+    // print_tlb(tlb);
     physical_address = translate_to_physical_address(corresponding_frame, page_offset);
-    printf("Physical address: %-15dValue: %c\n", physical_address, physical_memory[corresponding_frame].content[page_offset]);
+    printf("Physical address: %-15d\nValue: %c\n", physical_address, physical_memory[corresponding_frame].content[page_offset]);
     free(s);
     printf("\n");
 	}

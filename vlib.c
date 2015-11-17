@@ -67,7 +67,7 @@ int get_available_record(Record *page_table, int size) {
 void update_page_table(Record *page_table, int size, int page_number, int frame) {
   int a = get_available_record(page_table, size);
   if (a >= 0) {
-    printf("Update in page table: entry #%d, page %d, frame %d\n", a, page_number, frame);
+    printf("\tUpdate in page table #%d, page %d, frame %d\n", a, page_number, frame);
     page_table[a].page = page_number;
     page_table[a].frame = frame;
     page_table[a].dirty = 1;
@@ -106,8 +106,8 @@ void update_tlb(TLB *tlb, int page, int frame) {
   tlb->records[tlb->tail].page = page;
   tlb->records[tlb->tail].frame = frame;
   tlb->records[tlb->tail].dirty = 1;
+  printf("\tUpdate in TLB #%d: page %d, frame %d\n", tlb->tail, tlb->records[tlb->tail].page, tlb->records[tlb->tail].frame);
   tlb->tail = (tlb->tail + 1) % TLB_SIZE;
-  printf("Update in TLB#%d: page %d, frame %d\n", tlb->tail, tlb->records[tlb->tail].page, tlb->records[tlb->tail].frame);
 }
 
 int search_in_tlb(TLB tlb, int page) {
